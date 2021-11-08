@@ -13,15 +13,15 @@ void taskFunc(void *param) {
 
 void testThreadPool() {
   ThreadPool *pool = threadPoolCreate(3, 10, 100);
-  //   for (int i = 0; i < 100; ++i) {
-  //     int *num = (int *)malloc(sizeof(int));
-  //     *num = i + 100;
-  //     threadPoolAdd(pool, taskFunc, num);
-  //   }
+  for (int i = 0; i < 100; ++i) {
+    int *num = (int *)malloc(sizeof(int));
+    *num = i + 100;
+    threadPoolAdd(pool, taskFunc, num);
+  }
 
-  //   sleep(30);
+  sleep(30);
 
-  //   threadPoolDestroy(pool);
+  threadPoolDestroy(pool);
 }
 
 int main(int argc, char *argv[]) {

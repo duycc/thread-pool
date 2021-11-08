@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "threadpool.h"
 
@@ -149,12 +150,88 @@ void *worker(void *param) {
         }
       }
     }
+
+    // 判断线程池是否关闭
+    if (pool->shutdown) {
+      pthread_mutex_unlock(&pool->mutexPool);
+      threadExit(pool);
+    }
+
+    // 从队列中取出一个任务
+    Task task;
+    task.function = pool->taskQue[pool->queFront].function;
+    task.arg = pool->taskQue[pool->queFront].arg;
+
+    // 移动头结点
+    pool->queFront = (pool->queFront + 1) % pool->queCapacity;
+    pool->queSize--;
+
+    // 解锁
+    pthread_cond_signal(&pool->notFull);
+    pthread_mutex_unlock(&pool->mutexPool);
+
+    printf("thread %ld start working...\n", pthread_self());
+    pthread_mutex_lock(&pool->mutexBusy);
+    pool->busyNum++;
+    pthread_mutex_unlock(&pool->mutexBusy);
+    task.function(task.arg);
+    free(task.arg);
+    task.arg = NULL;
+
+    printf("thread %ld end working...\n", pthread_self());
+    pthread_mutex_lock(&pool->mutexBusy);
+    pool->busyNum--;
+    pthread_mutex_unlock(&pool->mutexBusy);
+  }
+  return NULL;
+}
+
+#define NUMBER 5
+
+void *manager(void *param) {
+  ThreadPool *pool = (ThreadPool *)param;
+  while (!pool->shutdown) {
+    sleep(3); // 每隔3s检测一次
+
+    // 取出线程池中任务的数量和当前线程的数量
+    pthread_mutex_lock(&pool->mutexPool);
+    int queSize = pool->queSize;
+    int aliveNum = pool->aliveNum;
+    pthread_mutex_unlock(&pool->mutexPool);
+
+    // 取出忙的线程数量
+    pthread_mutex_lock(&pool->mutexBusy);
+    int busyNum = pool->busyNum;
+    pthread_mutex_unlock(&pool->mutexBusy);
+
+    // 添加线程：任务个数 > 存活线程个数 && 存活线程数 < 最大线程数
+    if (queSize > aliveNum && aliveNum < pool->maxNum) {
+      pthread_mutex_lock(&pool->mutexPool);
+      int counter = 0;
+      for (int i = 0; i < pool->maxNum && counter < NUMBER && pool->aliveNum < pool->maxNum; ++i) {
+        if (pool->threadIDs[i] == 0) {
+          pthread_create(&pool->threadIDs[i], NULL, worker, pool);
+          counter++;
+          pool->aliveNum++;
+        }
+      }
+      pthread_mutex_unlock(&pool->mutexPool);
+    }
+
+    // 销毁线程：忙碌线程 * 2 < 存活线程数 && 存活线程数 < 最小线程数
+    if (busyNum * 2 < aliveNum && aliveNum > pool->minNum) {
+      pthread_mutex_lock(&pool->mutexPool);
+      pool->exitNum = NUMBER;
+      pthread_mutex_unlock(&pool->mutexPool);
+
+      for (int i = 0; i < NUMBER; ++i) {
+        pthread_cond_signal(&pool->notEmpty);
+      }
+    }
   }
 
   return NULL;
 }
-
-void *manager(void *param) { return NULL; }
 
 void threadExit(ThreadPool *pool) {
   pthread_t tid = pthread_self();
